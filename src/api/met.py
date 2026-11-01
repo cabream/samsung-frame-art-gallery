@@ -35,10 +35,10 @@ async def get_highlights(page: int = Query(1, ge=1), page_size: int = Query(48, 
 
 
 @router.get("/medium/{medium}")
-async def get_by_medium(medium: str, page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=500), highlights: bool = False):
+async def get_by_medium(medium: str, page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=500), highlights: bool = False, department_id: int = None):
     """Get artworks by medium (e.g., Paintings, Sculpture), paginated."""
     client = get_met_client()
-    return await client.get_by_medium_async(medium, page, page_size, highlights)
+    return await client.get_by_medium_async(medium, page, page_size, highlights, department_id)
 
 
 @router.get("/objects")
