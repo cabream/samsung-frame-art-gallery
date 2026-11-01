@@ -74,6 +74,19 @@ class SearchPaginationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.client.get_by_medium("Paintings", page, size)
 
+    def test_get_by_medium_filters_by_department(self):
+        self.client.get_by_medium("Paintings", 1, 24, True, department_id=11)
+        asyncio.run(self.client.get_by_medium_async("Paintings", 1, 24, True, department_id=6))
+        self.assertEqual(len(self.requests), 2)
+        first_query = parse_qs(urlsplit(self.requests[0]).query)
+        second_query = parse_qs(urlsplit(self.requests[1]).query)
+        self.assertEqual(first_query["medium"], ["Paintings"])
+        self.assertEqual(first_query["departmentId"], ["11"])
+        self.assertEqual(first_query["isHighlight"], ["true"])
+        self.assertEqual(second_query["medium"], ["Paintings"])
+        self.assertEqual(second_query["departmentId"], ["6"])
+        self.assertEqual(second_query["isHighlight"], ["true"])
+
 
 if __name__ == "__main__":
     unittest.main()

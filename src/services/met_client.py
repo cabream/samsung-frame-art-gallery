@@ -244,16 +244,18 @@ class MetClient:
             "has_more": end < min(total, 10000)
         }
 
-    def get_by_medium(self, medium: str, page: int = 1, page_size: int = 24, highlights_only: bool = False) -> dict:
+    def get_by_medium(self, medium: str, page: int = 1, page_size: int = 24, highlights_only: bool = False, department_id: Optional[int] = None) -> dict:
         """Get artworks by medium (e.g., Paintings, Sculpture), paginated."""
         import urllib.parse
         encoded_medium = urllib.parse.quote(medium)
 
+        dept_suffix = f":dept:{department_id}" if department_id else ""
         highlight_suffix = ":highlights" if highlights_only else ""
-        cache_key = f"medium:{medium}{highlight_suffix}:ids"
+        cache_key = f"medium:{medium}{dept_suffix}{highlight_suffix}:ids"
 
+        dept_param = f"&departmentId={department_id}" if department_id else ""
         highlight_param = "&isHighlight=true" if highlights_only else ""
-        url = f"{MET_SEARCH_URL}?hasImages=true&medium={encoded_medium}{highlight_param}&q=*"
+        url = f"{MET_SEARCH_URL}?hasImages=true&medium={encoded_medium}{dept_param}{highlight_param}&q=*"
         data = self._get_search_page(url, cache_key, page, page_size)
 
         total = data.get("total", 0)
@@ -366,16 +368,18 @@ class MetClient:
             "has_more": end < min(total, 10000)
         }
 
-    async def get_by_medium_async(self, medium: str, page: int = 1, page_size: int = 24, highlights_only: bool = False) -> dict:
+    async def get_by_medium_async(self, medium: str, page: int = 1, page_size: int = 24, highlights_only: bool = False, department_id: Optional[int] = None) -> dict:
         """Get artworks by medium, paginated (async parallel fetch)."""
         import urllib.parse
         encoded_medium = urllib.parse.quote(medium)
 
+        dept_suffix = f":dept:{department_id}" if department_id else ""
         highlight_suffix = ":highlights" if highlights_only else ""
-        cache_key = f"medium:{medium}{highlight_suffix}:ids"
+        cache_key = f"medium:{medium}{dept_suffix}{highlight_suffix}:ids"
 
+        dept_param = f"&departmentId={department_id}" if department_id else ""
         highlight_param = "&isHighlight=true" if highlights_only else ""
-        url = f"{MET_SEARCH_URL}?hasImages=true&medium={encoded_medium}{highlight_param}&q=*"
+        url = f"{MET_SEARCH_URL}?hasImages=true&medium={encoded_medium}{dept_param}{highlight_param}&q=*"
 
         data = await asyncio.to_thread(self._get_search_page, url, cache_key, page, page_size)
         total = data.get("total", 0)
