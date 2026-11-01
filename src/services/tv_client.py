@@ -198,36 +198,42 @@ class TVClient:
         self._thumbnail_cache.clear()
 
     def get_slideshow_status(self) -> dict:
-        """Get current slideshow status."""
+        """Get current slideshow status with auto_rotation fallback."""
+        tv = self._get_tv()
         try:
-            tv = self._get_tv()
             return tv.art().get_slideshow_status()
         except Exception as e:
-            _LOGGER.warning(f"Failed to get slideshow status: {e}")
-            return {"error": str(e)}
+            _LOGGER.info(f"slideshow API not supported, falling back to auto_rotation: {e}")
+            try:
+                return tv.art().get_auto_rotation_status()
+            except Exception as e2:
+                _LOGGER.warning(f"Failed to get auto_rotation status: {e2}")
+                return {"error": str(e2)}
 
     def set_slideshow_status(self, enabled: bool, duration: int = 15, shuffle: bool = True) -> dict:
-        """Set slideshow status.
+        """Set slideshow status with auto_rotation fallback.
 
         Args:
             enabled: Whether slideshow is enabled
             duration: Minutes between image changes (0 to disable)
             shuffle: Random order (True) or sequential (False)
         """
+        tv = self._get_tv()
         try:
-            tv = self._get_tv()
             if not enabled:
                 return tv.art().set_slideshow_status(duration=0)
             else:
-                # type=True means shuffle/random, type=False means sequential
-                return tv.art().set_slideshow_status(
-                    duration=duration,
-                    type=shuffle,
-                    category=2  # MY-C0002 = My Collection
-                )
+                return tv.art().set_slideshow_status(duration=duration, type=shuffle, category=2)
         except Exception as e:
-            _LOGGER.error(f"Failed to set slideshow status: {e}")
-            return {"error": str(e)}
+            _LOGGER.info(f"slideshow API failed ({e}), falling back to auto_rotation")
+            try:
+                if not enabled:
+                    return tv.art().set_auto_rotation_status(duration=0)
+                else:
+                    return tv.art().set_auto_rotation_status(duration=duration, type=shuffle, category=2)
+            except Exception as e2:
+                _LOGGER.error(f"Failed to set auto_rotation status: {e2}")
+                return {"error": str(e2)}
 
 
 def get_tv_client() -> Optional[TVClient]:
