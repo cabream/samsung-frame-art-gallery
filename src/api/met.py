@@ -28,28 +28,28 @@ async def get_departments():
 
 
 @router.get("/highlights")
-async def get_highlights(page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=500), medium: str = None):
+async def get_highlights(page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=500), medium: str = None):
     """Get highlighted artworks, paginated."""
     client = get_met_client()
     return await client.get_highlights_async(page, page_size, medium)
 
 
 @router.get("/medium/{medium}")
-async def get_by_medium(medium: str, page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=500), highlights: bool = False, department_id: int = None):
+async def get_by_medium(medium: str, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=500), highlights: bool = False, department_id: int = None):
     """Get artworks by medium (e.g., Paintings, Sculpture), paginated."""
     client = get_met_client()
     return await client.get_by_medium_async(medium, page, page_size, highlights, department_id)
 
 
 @router.get("/objects")
-async def get_objects(department_id: int, page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=500), highlights: bool = False):
+async def get_objects(department_id: int, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=500), highlights: bool = False):
     """Get artworks by department, paginated."""
     client = get_met_client()
     return await client.get_by_department_async(department_id, page, page_size, highlights)
 
 
 @router.get("/search")
-async def search_objects(q: str, department_id: int = None, medium: str = None, highlights: bool = False, page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=500)):
+async def search_objects(q: str, department_id: int = None, medium: str = None, highlights: bool = False, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=500)):
     """Search artworks by keyword, optionally filtered by department, medium, or highlights."""
     client = get_met_client()
     return await client.search_async(q, department_id, medium, highlights, page, page_size)

@@ -16,6 +16,7 @@ MET_API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1"
 MET_SEARCH_URL = "https://collectionapi.metmuseum.org/public/collection/v1.1/search"
 MET_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 DIMENSIONS_CACHE_DIR = Path(os.environ.get("THUMBNAILS_DIR", "/thumbnails")) / "met_dims"
+OBJECTS_CACHE_DIR = Path(os.environ.get("THUMBNAILS_DIR", "/thumbnails")) / "met_objects"
 
 
 @dataclass
@@ -43,18 +44,46 @@ class MetClient:
         """Cache value with TTL."""
         self._cache[key] = CacheEntry(data=data, expires_at=time.time() + ttl)
 
-    def _fetch_json(self, url: str) -> dict:
-        """Fetch JSON from URL."""
+    def _get_disk_cached_object(self, object_id: int) -> Optional[dict]:
+        """Get cached object details from disk if available."""
+        cache_file = OBJECTS_CACHE_DIR / f"{object_id}.json"
+        if cache_file.exists():
+            try:
+                return json.loads(cache_file.read_text())
+            except Exception:
+                pass
+        return None
+
+    def _set_disk_cached_object(self, object_id: int, data: dict) -> None:
+        """Persist object details to disk cache if writable."""
+        try:
+            OBJECTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_file = OBJECTS_CACHE_DIR / f"{object_id}.json"
+            cache_file.write_text(json.dumps(data))
+        except Exception:
+            pass
+
+    def _fetch_json(self, url: str, retries: int = 3) -> dict:
+        """Fetch JSON from URL with retry/backoff on 403/429."""
         _LOGGER.debug(f"Fetching: {url}")
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": MET_USER_AGENT,
-                "Accept": "application/json",
-            }
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode())
+        for attempt in range(retries):
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": MET_USER_AGENT,
+                    "Accept": "application/json",
+                }
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    return json.loads(response.read().decode())
+            except urllib.error.HTTPError as e:
+                if e.code in (403, 429) and attempt < retries - 1:
+                    wait = 2 ** attempt
+                    _LOGGER.warning(f"Rate limited ({e.code}) on {url}, waiting {wait}s...")
+                    time.sleep(wait)
+                    continue
+                raise
 
     def get_departments(self) -> list[dict]:
         """Get list of museum departments. Cached for 24h."""
@@ -69,25 +98,30 @@ class MetClient:
         return departments
 
     def get_object(self, object_id: int, retries: int = 3) -> Optional[dict]:
-        """Get single object details. Cached for 1h. Retries with backoff on 429."""
+        """Get single object details. Cached in memory and disk. Retries with backoff on 403/429."""
         cache_key = f"object:{object_id}"
         cached = self._get_cached(cache_key)
-        if cached:
+        if cached is not None:
             return cached
+
+        disk_cached = self._get_disk_cached_object(object_id)
+        if disk_cached is not None:
+            self._set_cached(cache_key, disk_cached, self._objects_ttl)
+            return disk_cached
 
         url = f"{MET_API_BASE}/objects/{object_id}"
 
         for attempt in range(retries):
             try:
                 data = self._fetch_json(url)
-                # Only cache if has image
+                self._set_cached(cache_key, data, self._objects_ttl)
                 if data.get("primaryImage") or data.get("primaryImageSmall"):
-                    self._set_cached(cache_key, data, self._objects_ttl)
+                    self._set_disk_cached_object(object_id, data)
                 return data
             except urllib.error.HTTPError as e:
-                if e.code == 429 and attempt < retries - 1:
+                if e.code in (403, 429) and attempt < retries - 1:
                     wait = 2 ** attempt  # 1s, 2s, 4s
-                    _LOGGER.warning(f"Rate limited on object {object_id}, waiting {wait}s...")
+                    _LOGGER.warning(f"Rate limited ({e.code}) on object {object_id}, waiting {wait}s...")
                     time.sleep(wait)
                     continue
                 _LOGGER.warning(f"HTTP error fetching object {object_id}: {e}")
@@ -223,10 +257,10 @@ class MetClient:
         """Get highlighted artworks with images, paginated."""
         if medium:
             cache_key = f"highlights:{medium}:ids"
-            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&medium={urllib.parse.quote(medium)}&q=*"
+            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&openAccess=true&medium={urllib.parse.quote(medium)}&q=*"
         else:
             cache_key = "highlights:ids"
-            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&q=*"
+            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&openAccess=true&q=*"
         data = self._get_search_page(url, cache_key, page, page_size)
 
         total = data.get("total", 0)
@@ -255,7 +289,7 @@ class MetClient:
 
         dept_param = f"&departmentId={department_id}" if department_id else ""
         highlight_param = "&isHighlight=true" if highlights_only else ""
-        url = f"{MET_SEARCH_URL}?hasImages=true&medium={encoded_medium}{dept_param}{highlight_param}&q=*"
+        url = f"{MET_SEARCH_URL}?hasImages=true&openAccess=true&medium={encoded_medium}{dept_param}{highlight_param}&q=*"
         data = self._get_search_page(url, cache_key, page, page_size)
 
         total = data.get("total", 0)
@@ -279,7 +313,7 @@ class MetClient:
         cache_key = f"department:{department_id}{highlight_suffix}:ids"
 
         highlight_param = "&isHighlight=true" if highlights_only else ""
-        url = f"{MET_SEARCH_URL}?departmentId={department_id}&hasImages=true{highlight_param}&q=*"
+        url = f"{MET_SEARCH_URL}?departmentId={department_id}&hasImages=true&openAccess=true{highlight_param}&q=*"
         data = self._get_search_page(url, cache_key, page, page_size)
 
         total = data.get("total", 0)
@@ -304,7 +338,7 @@ class MetClient:
 
         # Build cache key and URL
         # IMPORTANT: q parameter must come LAST for Met API to work correctly
-        params = ["hasImages=true"]
+        params = ["hasImages=true", "openAccess=true"]
         cache_parts = [f"search:{query}"]
 
         if department_id:
@@ -347,10 +381,10 @@ class MetClient:
         """Get highlighted artworks with images, paginated (async parallel fetch)."""
         if medium:
             cache_key = f"highlights:{medium}:ids"
-            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&medium={urllib.parse.quote(medium)}&q=*"
+            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&openAccess=true&medium={urllib.parse.quote(medium)}&q=*"
         else:
             cache_key = "highlights:ids"
-            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&q=*"
+            url = f"{MET_SEARCH_URL}?isHighlight=true&hasImages=true&openAccess=true&q=*"
 
         data = await asyncio.to_thread(self._get_search_page, url, cache_key, page, page_size)
         total = data.get("total", 0)
@@ -379,7 +413,7 @@ class MetClient:
 
         dept_param = f"&departmentId={department_id}" if department_id else ""
         highlight_param = "&isHighlight=true" if highlights_only else ""
-        url = f"{MET_SEARCH_URL}?hasImages=true&medium={encoded_medium}{dept_param}{highlight_param}&q=*"
+        url = f"{MET_SEARCH_URL}?hasImages=true&openAccess=true&medium={encoded_medium}{dept_param}{highlight_param}&q=*"
 
         data = await asyncio.to_thread(self._get_search_page, url, cache_key, page, page_size)
         total = data.get("total", 0)
@@ -403,7 +437,7 @@ class MetClient:
         cache_key = f"department:{department_id}{highlight_suffix}:ids"
 
         highlight_param = "&isHighlight=true" if highlights_only else ""
-        url = f"{MET_SEARCH_URL}?departmentId={department_id}&hasImages=true{highlight_param}&q=*"
+        url = f"{MET_SEARCH_URL}?departmentId={department_id}&hasImages=true&openAccess=true{highlight_param}&q=*"
 
         data = await asyncio.to_thread(self._get_search_page, url, cache_key, page, page_size)
         total = data.get("total", 0)
@@ -426,7 +460,7 @@ class MetClient:
         import urllib.parse
         encoded_query = urllib.parse.quote(query)
 
-        params = ["hasImages=true"]
+        params = ["hasImages=true", "openAccess=true"]
         cache_parts = [f"search:{query}"]
 
         if department_id:

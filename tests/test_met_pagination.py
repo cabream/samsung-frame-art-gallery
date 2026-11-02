@@ -47,6 +47,7 @@ class SearchPaginationTests(unittest.TestCase):
                 self.assertTrue(data["has_more"])
         for url in self.requests:
             self.assertEqual(urlsplit(url).path, "/public/collection/v1.1/search")
+            self.assertEqual(parse_qs(urlsplit(url).query).get("openAccess"), ["true"])
         search = parse_qs(urlsplit(self.requests[-1]).query)
         self.assertEqual(search["q"], ["Van Gogh & sunflowers"])
         self.assertEqual(search["departmentId"], ["11"])
