@@ -117,24 +117,15 @@ const onScroll = () => {
   }
 }
 
-// Reset display count when local images are replaced, and check if more pages are needed
-watch(() => props.images, async (newImages, oldImages) => {
+// Reset display count when local images are replaced
+watch(() => props.images, (newImages, oldImages) => {
   if (props.isLocal) {
     const isAppend = oldImages && oldImages.length > 0 && newImages.length > oldImages.length && newImages[0] === oldImages[0]
     if (!isAppend) {
       displayCount.value = BATCH_SIZE
     }
   }
-  await nextTick()
-  onScroll()
 }, { deep: false })
-
-watch(() => props.loadingMore, async (isLoadingMore) => {
-  if (!isLoadingMore) {
-    await nextTick()
-    onScroll()
-  }
-})
 
 const setupObserver = () => {
   if (observer) {

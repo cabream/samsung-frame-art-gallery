@@ -1,7 +1,9 @@
 import asyncio
+import collections
 import hashlib
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -32,6 +34,11 @@ class MetClient:
         self._cache: dict[str, CacheEntry] = {}
         self._departments_ttl = 86400  # 24 hours
         self._objects_ttl = 3600  # 1 hour
+        self._rate_lock = threading.Lock()
+        self._request_times: collections.deque[float] = collections.deque()
+        self._cooldown_until: float = 0.0
+        self._max_requests_per_window = 70
+        self._rate_window_seconds = 60.0
 
     def _get_cached(self, key: str) -> Optional[any]:
         """Get cached value if not expired."""
@@ -63,10 +70,28 @@ class MetClient:
         except Exception:
             pass
 
-    def _fetch_json(self, url: str, retries: int = 3) -> dict:
-        """Fetch JSON from URL with retry/backoff on 403/429."""
+    def _wait_for_rate_limit(self) -> None:
+        """Throttle outbound requests to stay below the Met API WAF rate limit."""
+        while True:
+            with self._rate_lock:
+                now = time.time()
+                if self._cooldown_until > now:
+                    sleep_time = self._cooldown_until - now
+                else:
+                    while self._request_times and now - self._request_times[0] >= self._rate_window_seconds:
+                        self._request_times.popleft()
+                    if len(self._request_times) < self._max_requests_per_window:
+                        self._request_times.append(now)
+                        return
+                    sleep_time = self._rate_window_seconds - (now - self._request_times[0]) + 0.1
+            if sleep_time > 0:
+                time.sleep(min(sleep_time, 5.0))
+
+    def _fetch_json(self, url: str, retries: int = 5) -> dict:
+        """Fetch JSON from URL with sliding-window rate limiting and retry/backoff on 403/429."""
         _LOGGER.debug(f"Fetching: {url}")
         for attempt in range(retries):
+            self._wait_for_rate_limit()
             req = urllib.request.Request(
                 url,
                 headers={
@@ -79,9 +104,12 @@ class MetClient:
                     return json.loads(response.read().decode())
             except urllib.error.HTTPError as e:
                 if e.code in (403, 429) and attempt < retries - 1:
-                    wait = 2 ** attempt
-                    _LOGGER.warning(f"Rate limited ({e.code}) on {url}, waiting {wait}s...")
-                    time.sleep(wait)
+                    with self._rate_lock:
+                        now = time.time()
+                        if self._cooldown_until <= now:
+                            wait = 10 * (attempt + 1)
+                            _LOGGER.warning(f"Rate limited ({e.code}) on {url}, cooling down {wait}s...")
+                            self._cooldown_until = now + wait
                     continue
                 raise
 
@@ -97,7 +125,7 @@ class MetClient:
         self._set_cached(cache_key, departments, self._departments_ttl)
         return departments
 
-    def get_object(self, object_id: int, retries: int = 3) -> Optional[dict]:
+    def get_object(self, object_id: int, retries: int = 5) -> Optional[dict]:
         """Get single object details. Cached in memory and disk. Retries with backoff on 403/429."""
         cache_key = f"object:{object_id}"
         cached = self._get_cached(cache_key)
@@ -111,25 +139,18 @@ class MetClient:
 
         url = f"{MET_API_BASE}/objects/{object_id}"
 
-        for attempt in range(retries):
-            try:
-                data = self._fetch_json(url)
-                self._set_cached(cache_key, data, self._objects_ttl)
-                if data.get("primaryImage") or data.get("primaryImageSmall"):
-                    self._set_disk_cached_object(object_id, data)
-                return data
-            except urllib.error.HTTPError as e:
-                if e.code in (403, 429) and attempt < retries - 1:
-                    wait = 2 ** attempt  # 1s, 2s, 4s
-                    _LOGGER.warning(f"Rate limited ({e.code}) on object {object_id}, waiting {wait}s...")
-                    time.sleep(wait)
-                    continue
-                _LOGGER.warning(f"HTTP error fetching object {object_id}: {e}")
-                return None
-            except Exception as e:
-                _LOGGER.warning(f"Failed to fetch object {object_id}: {e}")
-                return None
-        return None
+        try:
+            data = self._fetch_json(url, retries=retries)
+            self._set_cached(cache_key, data, self._objects_ttl)
+            if data.get("primaryImage") or data.get("primaryImageSmall"):
+                self._set_disk_cached_object(object_id, data)
+            return data
+        except urllib.error.HTTPError as e:
+            _LOGGER.warning(f"HTTP error fetching object {object_id}: {e}")
+            return None
+        except Exception as e:
+            _LOGGER.warning(f"Failed to fetch object {object_id}: {e}")
+            return None
 
     def batch_fetch_objects(self, object_ids: list[int]) -> list[dict]:
         """Fetch multiple objects, filtering those without images and deduplicating by image URL."""
