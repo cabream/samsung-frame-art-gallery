@@ -11,11 +11,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install git for pip
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# Apply OS security updates and install git for pip
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY --from=frontend /app/dist ./static/
