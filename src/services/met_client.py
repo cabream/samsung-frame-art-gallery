@@ -37,8 +37,9 @@ class MetClient:
         self._rate_lock = threading.Lock()
         self._request_times: collections.deque[float] = collections.deque()
         self._cooldown_until: float = 0.0
-        self._max_requests_per_window = 70
+        self._max_requests_per_window = 78
         self._rate_window_seconds = 60.0
+        self._min_request_interval = 0.12
 
     def _get_cached(self, key: str) -> Optional[any]:
         """Get cached value if not expired."""
@@ -80,10 +81,13 @@ class MetClient:
                 else:
                     while self._request_times and now - self._request_times[0] >= self._rate_window_seconds:
                         self._request_times.popleft()
-                    if len(self._request_times) < self._max_requests_per_window:
+                    if self._request_times and now - self._request_times[-1] < self._min_request_interval:
+                        sleep_time = self._min_request_interval - (now - self._request_times[-1])
+                    elif len(self._request_times) < self._max_requests_per_window:
                         self._request_times.append(now)
                         return
-                    sleep_time = self._rate_window_seconds - (now - self._request_times[0]) + 0.1
+                    else:
+                        sleep_time = self._rate_window_seconds - (now - self._request_times[0]) + 0.1
             if sleep_time > 0:
                 time.sleep(min(sleep_time, 5.0))
 
@@ -142,7 +146,7 @@ class MetClient:
         try:
             data = self._fetch_json(url, retries=retries)
             self._set_cached(cache_key, data, self._objects_ttl)
-            if data.get("primaryImage") or data.get("primaryImageSmall"):
+            if data and (data.get("objectID") or data.get("primaryImage") or data.get("primaryImageSmall")):
                 self._set_disk_cached_object(object_id, data)
             return data
         except urllib.error.HTTPError as e:
@@ -224,7 +228,7 @@ class MetClient:
             "met_url": obj.get("objectURL", "")
         }
 
-    async def batch_fetch_objects_async(self, object_ids: list[int], max_concurrent: int = 5) -> list[dict]:
+    async def batch_fetch_objects_async(self, object_ids: list[int], max_concurrent: int = 3) -> list[dict]:
         """Fetch objects in parallel with concurrency limit."""
         semaphore = asyncio.Semaphore(max_concurrent)
 
