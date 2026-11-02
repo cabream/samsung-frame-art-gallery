@@ -34,6 +34,8 @@
         :gap="16"
         :ssr-columns="4"
         :scroll-container="gridRef"
+        @redraw="onMasonryRedraw"
+        @redraw-skip="onMasonryRedraw"
       >
         <template #default="{ item }">
           <ImageCard
@@ -51,6 +53,9 @@
           <div class="spinner"></div>
           <span>Loading more...</span>
         </div>
+        <button v-else class="load-more-btn" @click="loadMore">
+          Load More
+        </button>
       </div>
     </div>
   </div>
@@ -79,7 +84,9 @@ const emit = defineEmits(['toggle', 'select-all', 'preview', 'load-more'])
 const gridRef = ref(null)
 const sentinelRef = ref(null)
 const displayCount = ref(BATCH_SIZE)
+const isRedrawing = ref(false)
 let observer = null
+let resizeObserver = null
 
 // Provide scroll container to child ImageCards for IntersectionObserver
 provide('scrollContainer', gridRef)
@@ -110,11 +117,22 @@ const loadMore = () => {
 
 const onScroll = () => {
   // Fallback scroll handler if IntersectionObserver doesn't work
-  if (!gridRef.value || !hasMore.value || props.loading || props.loadingMore) return
+  if (!gridRef.value || !hasMore.value || props.loading || props.loadingMore || isRedrawing.value) return
   const { scrollTop, scrollHeight, clientHeight } = gridRef.value
+  if (clientHeight === 0) return
   if (scrollTop + clientHeight >= scrollHeight - 200) {
     loadMore()
   }
+}
+
+const onMasonryRedraw = async () => {
+  await nextTick()
+  isRedrawing.value = false
+  if (observer && sentinelRef.value) {
+    observer.unobserve(sentinelRef.value)
+    observer.observe(sentinelRef.value)
+  }
+  onScroll()
 }
 
 // Reset display count when local images are replaced
@@ -127,16 +145,33 @@ watch(() => props.images, (newImages, oldImages) => {
   }
 }, { deep: false })
 
+watch(visibleImages, (newVisible) => {
+  if (newVisible.length > 0) {
+    isRedrawing.value = true
+  }
+}, { deep: false })
+
+watch(() => props.loadingMore, async (isLoadingMore) => {
+  if (!isLoadingMore && !isRedrawing.value) {
+    await nextTick()
+    onScroll()
+  }
+})
+
 const setupObserver = () => {
   if (observer) {
     observer.disconnect()
     observer = null
   }
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   if (!gridRef.value) return
 
   observer = new IntersectionObserver(
     (entries) => {
-      if (entries[0]?.isIntersecting) {
+      if (entries[0]?.isIntersecting && !isRedrawing.value && gridRef.value?.clientHeight > 0) {
         loadMore()
       }
     },
@@ -149,6 +184,15 @@ const setupObserver = () => {
 
   if (sentinelRef.value) {
     observer.observe(sentinelRef.value)
+  }
+
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => {
+      if (gridRef.value?.clientHeight > 0 && !isRedrawing.value) {
+        onScroll()
+      }
+    })
+    resizeObserver.observe(gridRef.value)
   }
 }
 
@@ -165,6 +209,10 @@ onUnmounted(() => {
   if (observer) {
     observer.disconnect()
     observer = null
+  }
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
   }
 })
 </script>
@@ -241,6 +289,24 @@ onUnmounted(() => {
   gap: 0.75rem;
   color: #888;
   padding: 1rem;
+}
+
+.load-more-btn {
+  margin: 0.75rem 0;
+  padding: 0.5rem 1.25rem;
+  border-radius: 6px;
+  border: 1px solid #3a3a5e;
+  background: #1a1a2e;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.load-more-btn:hover {
+  background: #2a2a4e;
+  color: white;
+  border-color: #4a90d9;
 }
 
 .spinner {
