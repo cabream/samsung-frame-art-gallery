@@ -1,0 +1,60 @@
+name: Sync Upstream Repository
+
+on:
+  schedule:
+    # Check daily at 05:00 UTC for new upstream commits
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch and merge upstream changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/mcsdodo/samsung-frame-art-gallery.git
+          git fetch upstream master
+
+          NEW_COMMITS=$(git rev-list --count HEAD..upstream/master)
+          if [ "$NEW_COMMITS" -eq 0 ]; then
+            echo "Already up to date with upstream/master."
+            exit 0
+          fi
+
+          echo "Found $NEW_COMMITS new commit(s) on upstream/master."
+          git checkout -B chore/upstream-sync
+
+          if git merge --no-edit upstream/master && python -m unittest discover -s tests -v; then
+            echo "Upstream merge and unit tests succeeded; updating master."
+            git checkout master
+            git merge --ff-only chore/upstream-sync
+            git push origin master
+          else
+            echo "Merge conflict or test failure detected; opening issue for manual review."
+            git merge --abort || true
+            gh issue create \
+              --title "Upstream sync requires manual merge ($NEW_COMMITS new commits)" \
+              --body "Automatic merge from \`mcsdodo/samsung-frame-art-gallery:master\` encountered a conflict or test failure. Please review and merge manually." || true
+            exit 1
+          fi
