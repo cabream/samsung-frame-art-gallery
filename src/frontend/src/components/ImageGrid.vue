@@ -57,7 +57,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onUnmounted, provide } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, provide, nextTick } from 'vue'
 import MasonryWall from '@yeger/vue-masonry-wall'
 import ImageCard from './ImageCard.vue'
 
@@ -84,8 +84,12 @@ let observer = null
 // Provide scroll container to child ImageCards for IntersectionObserver
 provide('scrollContainer', gridRef)
 
-const visibleImages = computed(() => props.images.slice(0, displayCount.value))
-const hasMoreInternal = computed(() => displayCount.value < props.images.length)
+const visibleImages = computed(() =>
+  props.isLocal ? props.images.slice(0, displayCount.value) : props.images
+)
+const hasMoreInternal = computed(() =>
+  props.isLocal && displayCount.value < props.images.length
+)
 const hasMore = computed(() => hasMoreInternal.value || props.hasMoreExternal)
 const selectedCount = computed(() => props.selectedIds.size)
 const displayTotal = computed(() => props.totalCount ?? props.images.length)
@@ -93,12 +97,8 @@ const allSelected = computed(() =>
   props.images.length > 0 && props.selectedIds.size === props.images.length
 )
 
-// Reset display count when images change
-watch(() => props.images, () => {
-  displayCount.value = BATCH_SIZE
-}, { deep: false })
-
 const loadMore = () => {
+  if (props.loading || props.loadingMore) return
   if (hasMoreInternal.value) {
     // Still have local images to reveal
     displayCount.value = Math.min(displayCount.value + BATCH_SIZE, props.images.length)
@@ -110,15 +110,39 @@ const loadMore = () => {
 
 const onScroll = () => {
   // Fallback scroll handler if IntersectionObserver doesn't work
-  if (!gridRef.value || !hasMore.value) return
+  if (!gridRef.value || !hasMore.value || props.loading || props.loadingMore) return
   const { scrollTop, scrollHeight, clientHeight } = gridRef.value
   if (scrollTop + clientHeight >= scrollHeight - 200) {
     loadMore()
   }
 }
 
-onMounted(() => {
-  // Use IntersectionObserver for infinite scroll
+// Reset display count when local images are replaced, and check if more pages are needed
+watch(() => props.images, async (newImages, oldImages) => {
+  if (props.isLocal) {
+    const isAppend = oldImages && oldImages.length > 0 && newImages.length > oldImages.length && newImages[0] === oldImages[0]
+    if (!isAppend) {
+      displayCount.value = BATCH_SIZE
+    }
+  }
+  await nextTick()
+  onScroll()
+}, { deep: false })
+
+watch(() => props.loadingMore, async (isLoadingMore) => {
+  if (!isLoadingMore) {
+    await nextTick()
+    onScroll()
+  }
+})
+
+const setupObserver = () => {
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+  if (!gridRef.value) return
+
   observer = new IntersectionObserver(
     (entries) => {
       if (entries[0]?.isIntersecting) {
@@ -135,14 +159,15 @@ onMounted(() => {
   if (sentinelRef.value) {
     observer.observe(sentinelRef.value)
   }
+}
+
+onMounted(() => {
+  setupObserver()
 })
 
-// Re-observe sentinel when it changes
-watch(sentinelRef, (newSentinel, oldSentinel) => {
-  if (observer) {
-    if (oldSentinel) observer.unobserve(oldSentinel)
-    if (newSentinel) observer.observe(newSentinel)
-  }
+// Re-initialize observer when scroll container or sentinel changes
+watch([gridRef, sentinelRef], () => {
+  setupObserver()
 })
 
 onUnmounted(() => {
