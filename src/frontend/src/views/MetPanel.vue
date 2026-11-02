@@ -236,7 +236,17 @@ const loadDepartments = async () => {
   }
 }
 
+let activeAbortController = null
+let activeRequestId = 0
+
 const loadArtwork = async (append = false) => {
+  if (activeAbortController) {
+    activeAbortController.abort()
+  }
+  const abortController = new AbortController()
+  activeAbortController = abortController
+  const requestId = ++activeRequestId
+
   if (!append) {
     currentPage.value = 1
     artwork.value = []
@@ -295,8 +305,10 @@ const loadArtwork = async (append = false) => {
       endpoint = `/api/met/highlights?page=${currentPage.value}`
     }
 
-    const res = await fetch(endpoint)
+    const res = await fetch(endpoint, { signal: abortController.signal })
+    if (requestId !== activeRequestId) return
     const data = await res.json()
+    if (requestId !== activeRequestId) return
 
     // Transform for ImageGrid compatibility
     const newArtwork = (data.objects || []).map(obj => ({
@@ -316,10 +328,14 @@ const loadArtwork = async (append = false) => {
     hasMore.value = data.has_more
     totalCount.value = data.total || artwork.value.length
   } catch (e) {
-    console.error('Failed to load artwork:', e)
+    if (e.name !== 'AbortError') {
+      console.error('Failed to load artwork:', e)
+    }
   } finally {
-    loading.value = false
-    loadingMore.value = false
+    if (requestId === activeRequestId) {
+      loading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
