@@ -306,6 +306,9 @@ const loadArtwork = async (append = false) => {
     }
 
     const res = await fetch(endpoint, { signal: abortController.signal })
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
     if (requestId !== activeRequestId) return
     const data = await res.json()
     if (requestId !== activeRequestId) return
@@ -319,15 +322,20 @@ const loadArtwork = async (append = false) => {
     }))
 
     if (append) {
-      artwork.value = [...artwork.value, ...newArtwork]
+      const existingIds = new Set(artwork.value.map(a => a.object_id))
+      const uniqueNew = newArtwork.filter(a => !existingIds.has(a.object_id))
+      artwork.value = [...artwork.value, ...uniqueNew]
     } else {
       artwork.value = newArtwork
       selectedIds.value = new Set()
     }
 
-    hasMore.value = data.has_more
-    totalCount.value = data.total || artwork.value.length
+    hasMore.value = Boolean(data.has_more)
+    totalCount.value = hasMore.value ? (data.total || artwork.value.length) : artwork.value.length
   } catch (e) {
+    if (append && currentPage.value > 1) {
+      currentPage.value--
+    }
     if (e.name !== 'AbortError') {
       console.error('Failed to load artwork:', e)
     }
