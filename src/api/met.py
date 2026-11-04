@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import asyncio
 import base64
 
@@ -67,14 +67,14 @@ async def get_object(object_id: int):
 
 class MetPreviewRequest(BaseModel):
     object_ids: list[int]
-    crop_percent: int = 0
-    matte_percent: int = 10
+    crop_percent: int = Field(0, ge=0, le=49)
+    matte_percent: int = Field(10, ge=0)
 
 
 class MetUploadRequest(BaseModel):
     object_ids: list[int]
-    crop_percent: int = 0
-    matte_percent: int = 10
+    crop_percent: int = Field(0, ge=0, le=49)
+    matte_percent: int = Field(10, ge=0)
     display: bool = False
 
 
