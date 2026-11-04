@@ -78,52 +78,57 @@ class MetUploadRequest(BaseModel):
     display: bool = False
 
 
+MAX_CONCURRENT_DOWNLOADS = 4
+
+
 @router.post("/preview")
 async def preview_met_artwork(request: MetPreviewRequest):
     """Generate preview of processed Met artwork (cropped + matted)."""
     met_client = get_met_client()
     cache = get_preview_cache()
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
     async def process_single_preview(object_id: int):
-        try:
-            # Use met:{object_id} as cache key to distinguish from local files
-            cache_key = f"met:{object_id}"
+        async with semaphore:
+            try:
+                # Use met:{object_id} as cache key to distinguish from local files
+                cache_key = f"met:{object_id}"
 
-            # Check cache first
-            cached = cache.get(cache_key, request.crop_percent, request.matte_percent)
-            if cached:
-                original, processed = cached
-                # Still need object details for the name
-                obj = await asyncio.to_thread(met_client.get_object, object_id)
-                name = obj.get("title", "Untitled") if obj else "Untitled"
-            else:
-                obj = await asyncio.to_thread(met_client.get_object, object_id)
-                if not obj:
-                    return None
+                # Check cache first
+                cached = cache.get(cache_key, request.crop_percent, request.matte_percent)
+                if cached:
+                    original, processed = cached
+                    # Still need object details for the name
+                    obj = await asyncio.to_thread(met_client.get_object, object_id)
+                    name = obj.get("title", "Untitled") if obj else "Untitled"
+                else:
+                    obj = await asyncio.to_thread(met_client.get_object, object_id)
+                    if not obj:
+                        return None
 
-                # Use small image for preview (faster download), full image for upload
-                image_url = obj.get("primaryImageSmall") or obj.get("primaryImage")
-                if not image_url:
-                    return None
+                    # Use small image for preview (faster download), full image for upload
+                    image_url = obj.get("primaryImageSmall") or obj.get("primaryImage")
+                    if not image_url:
+                        return None
 
-                image_data = await asyncio.to_thread(met_client.fetch_image, image_url)
-                original, processed = await asyncio.to_thread(
-                    generate_preview, image_data, request.crop_percent, request.matte_percent
-                )
-                # Store in cache
-                cache.set(cache_key, request.crop_percent, request.matte_percent, original, processed)
-                name = obj.get("title", "Untitled")
+                    image_data = await asyncio.to_thread(met_client.fetch_image, image_url)
+                    original, processed = await asyncio.to_thread(
+                        generate_preview, image_data, request.crop_percent, request.matte_percent
+                    )
+                    # Store in cache
+                    cache.set(cache_key, request.crop_percent, request.matte_percent, original, processed)
+                    name = obj.get("title", "Untitled")
 
-            return {
-                "id": object_id,
-                "name": name,
-                "original_url": f"data:image/jpeg;base64,{base64.b64encode(original).decode('utf-8')}",
-                "processed_url": f"data:image/jpeg;base64,{base64.b64encode(processed).decode('utf-8')}"
-            }
-        except Exception:
-            return None  # Skip failed previews silently
+                return {
+                    "id": object_id,
+                    "name": name,
+                    "original_url": f"data:image/jpeg;base64,{base64.b64encode(original).decode('utf-8')}",
+                    "processed_url": f"data:image/jpeg;base64,{base64.b64encode(processed).decode('utf-8')}"
+                }
+            except Exception:
+                return None  # Skip failed previews silently
 
-    # Process all previews in parallel
+    # Process all previews with bounded concurrency
     results = await asyncio.gather(*[process_single_preview(oid) for oid in request.object_ids])
     previews = [p for p in results if p is not None]
 
@@ -135,32 +140,34 @@ async def upload_met_artwork(request: MetUploadRequest):
     """Download Met artwork, process, and upload to TV."""
     met_client = get_met_client()
     tv_client = require_tv_client()
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
     async def fetch_and_process(object_id: int):
-        """Fetch and process image in parallel, return processed data and metadata."""
-        try:
-            obj = await asyncio.to_thread(met_client.get_object, object_id)
-            if not obj:
-                return {"object_id": object_id, "success": False, "error": "Object not found"}
+        """Fetch and process image with concurrency limit, return processed data and metadata."""
+        async with semaphore:
+            try:
+                obj = await asyncio.to_thread(met_client.get_object, object_id)
+                if not obj:
+                    return {"object_id": object_id, "success": False, "error": "Object not found"}
 
-            image_url = obj.get("primaryImage") or obj.get("primaryImageSmall")
-            if not image_url:
-                return {"object_id": object_id, "success": False, "error": "No image available"}
+                image_url = obj.get("primaryImage") or obj.get("primaryImageSmall")
+                if not image_url:
+                    return {"object_id": object_id, "success": False, "error": "No image available"}
 
-            image_data = await asyncio.to_thread(met_client.fetch_image, image_url)
-            processed_data = await asyncio.to_thread(
-                process_for_tv, image_data, request.crop_percent, request.matte_percent
-            )
+                image_data = await asyncio.to_thread(met_client.fetch_image, image_url)
+                processed_data = await asyncio.to_thread(
+                    process_for_tv, image_data, request.crop_percent, request.matte_percent
+                )
 
-            return {
-                "object_id": object_id,
-                "processed_data": processed_data,
-                "title": obj.get("title", "Untitled")
-            }
-        except Exception as e:
-            return {"object_id": object_id, "success": False, "error": str(e)}
+                return {
+                    "object_id": object_id,
+                    "processed_data": processed_data,
+                    "title": obj.get("title", "Untitled")
+                }
+            except Exception as e:
+                return {"object_id": object_id, "success": False, "error": str(e)}
 
-    # Fetch and process all images in parallel
+    # Fetch and process all images with bounded concurrency
     processed_items = await asyncio.gather(*[fetch_and_process(oid) for oid in request.object_ids])
 
     # Upload sequentially (TV may not handle parallel uploads well)
