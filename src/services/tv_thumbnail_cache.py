@@ -14,7 +14,7 @@ CACHE_DIR = THUMBNAILS_DIR / "tv"
 
 class TVThumbnailCache:
     def __init__(self):
-        CACHE_DIR.mkdir(exist_ok=True)
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     def _cache_path(self, content_id: str) -> Path:
         # Sanitize content_id for safe filename
@@ -25,24 +25,38 @@ class TVThumbnailCache:
         path = self._cache_path(content_id)
         if path.exists():
             _LOGGER.debug(f"Cache hit for thumbnail: {content_id}")
-            return path.read_bytes()
+            try:
+                return path.read_bytes()
+            except OSError as e:
+                _LOGGER.warning(f"Failed to read cached thumbnail {path}: {e}")
+                return None
         return None
 
     def set(self, content_id: str, data: bytes) -> None:
         path = self._cache_path(content_id)
-        path.write_bytes(data)
-        _LOGGER.debug(f"Cached thumbnail: {content_id}")
+        temp_path = path.with_suffix(".tmp")
+        try:
+            temp_path.write_bytes(data)
+            temp_path.replace(path)
+            _LOGGER.debug(f"Cached thumbnail: {content_id}")
+        except OSError as e:
+            _LOGGER.warning(f"Failed to write cached thumbnail {path}: {e}")
 
     def invalidate(self, content_id: str) -> None:
         path = self._cache_path(content_id)
-        if path.exists():
-            path.unlink()
+        try:
+            path.unlink(missing_ok=True)
             _LOGGER.debug(f"Invalidated cache for: {content_id}")
+        except OSError as e:
+            _LOGGER.warning(f"Failed to invalidate thumbnail {path}: {e}")
 
     def clear(self) -> None:
         """Clear all cached thumbnails."""
         for path in CACHE_DIR.glob("*.jpg"):
-            path.unlink()
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         _LOGGER.info("Cleared all thumbnail cache")
 
     def cleanup_orphaned(self, valid_content_ids: set[str]) -> int:
@@ -60,9 +74,12 @@ class TVThumbnailCache:
             cached_id = path.stem.replace("_", "/")
             # Also try without replacement in case content_id had no slashes
             if cached_id not in valid_content_ids and path.stem not in valid_content_ids:
-                path.unlink()
-                removed += 1
-                _LOGGER.debug(f"Removed orphaned thumbnail: {path.stem}")
+                try:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                    _LOGGER.debug(f"Removed orphaned thumbnail: {path.stem}")
+                except OSError:
+                    pass
         
         if removed:
             _LOGGER.info(f"Cleaned up {removed} orphaned TV thumbnail(s)")

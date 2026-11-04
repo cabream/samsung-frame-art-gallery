@@ -78,6 +78,7 @@ def discover_tvs() -> list[DiscoveredTV]:
     """Discover Samsung TVs on the network using SSDP."""
     _LOGGER.info("Starting SSDP discovery...")
     discovered = {}
+    sock = None
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -112,7 +113,8 @@ def discover_tvs() -> list[DiscoveredTV]:
     except Exception as e:
         _LOGGER.error(f"SSDP discovery failed: {e}")
     finally:
-        sock.close()
+        if sock:
+            sock.close()
 
     _LOGGER.info(f"Discovery complete, found {len(discovered)} TV(s)")
     return list(discovered.values())
