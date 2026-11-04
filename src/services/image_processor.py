@@ -64,7 +64,11 @@ def process_for_tv(
 
 
 def _crop_image(img: Image.Image, crop_percent: int) -> Image.Image:
-    """Crop percentage from all 4 edges."""
+    """Crop percentage from all 4 edges. Clamped to 0-49% to prevent ZeroDivisionError or coordinate inversion."""
+    crop_percent = max(0, min(49, crop_percent))
+    if crop_percent == 0:
+        return img
+
     w, h = img.size
     crop_x = int(w * crop_percent / 100)
     crop_y = int(h * crop_percent / 100)
@@ -127,6 +131,7 @@ def _add_matte(img: Image.Image, matte_percent: int) -> Image.Image:
     - Expand as needed to reach 16:9
     - Image centered on white canvas
     """
+    matte_percent = max(0, matte_percent)
     w, h = img.size
     longer_side = max(w, h)
     min_matte = int(longer_side * matte_percent / 100)

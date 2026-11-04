@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from pathlib import Path
 import os
@@ -41,16 +41,16 @@ class SetCurrentRequest(BaseModel):
 
 class PreviewRequest(BaseModel):
     paths: list[str]
-    crop_percent: int = 0
-    matte_percent: int = 10
+    crop_percent: int = Field(0, ge=0, le=49)
+    matte_percent: int = Field(10, ge=0)
     reframe_enabled: bool = False
     reframe_offsets: dict[str, dict] = {}  # path -> {"x": 0.5, "y": 0.5}
 
 
 class UploadRequest(BaseModel):
     paths: list[str]
-    crop_percent: int = 0
-    matte_percent: int = 10
+    crop_percent: int = Field(0, ge=0, le=49)
+    matte_percent: int = Field(10, ge=0)
     display: bool = False
     reframe_enabled: bool = False
     reframe_offsets: dict[str, dict] = {}  # path -> {"x": 0.5, "y": 0.5}
