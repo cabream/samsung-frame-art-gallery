@@ -18,7 +18,8 @@ def is_valid_image(path: Path) -> bool:
 def get_safe_path(relative_path: str) -> Path:
     """Prevent directory traversal attacks."""
     full_path = (IMAGES_DIR / relative_path).resolve()
-    if not str(full_path).startswith(str(IMAGES_DIR.resolve())):
+    base_path = IMAGES_DIR.resolve()
+    if not full_path.is_relative_to(base_path):
         raise HTTPException(status_code=403, detail="Access denied")
     return full_path
 

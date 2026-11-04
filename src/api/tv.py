@@ -30,7 +30,8 @@ DEFAULT_CROP_PERCENT = int(os.environ.get("DEFAULT_CROP_PERCENT", "0"))
 
 def get_safe_path(relative_path: str) -> Path:
     full_path = (IMAGES_DIR / relative_path).resolve()
-    if not str(full_path).startswith(str(IMAGES_DIR.resolve())):
+    base_path = IMAGES_DIR.resolve()
+    if not full_path.is_relative_to(base_path):
         raise HTTPException(status_code=403, detail="Access denied")
     return full_path
 
