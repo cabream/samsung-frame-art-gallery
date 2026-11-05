@@ -65,7 +65,7 @@ class TVSettingsRequest(BaseModel):
 
 class SlideshowRequest(BaseModel):
     enabled: bool
-    duration: int = 15  # minutes
+    duration: int = Field(15, ge=0)  # minutes
     shuffle: bool = True
 
 

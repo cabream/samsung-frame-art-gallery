@@ -22,11 +22,9 @@
           </label>
           <template v-if="slideshowEnabled">
             <select v-model.number="slideshowDuration" @change="updateSlideshow" :disabled="slideshowLoading" class="duration-select">
-              <option :value="5">5 min</option>
-              <option :value="10">10 min</option>
-              <option :value="15">15 min</option>
-              <option :value="30">30 min</option>
-              <option :value="60">1 hr</option>
+              <option v-for="opt in durationOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
             </select>
             <label class="toggle-label">
               <input
@@ -81,9 +79,23 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import ImageGrid from '../components/ImageGrid.vue'
 import ActionBar from '../components/ActionBar.vue'
+
+const DURATION_OPTIONS = [
+  { value: 3, label: '3 min' },
+  { value: 5, label: '5 min' },
+  { value: 10, label: '10 min' },
+  { value: 15, label: '15 min' },
+  { value: 30, label: '30 min' },
+  { value: 60, label: '1 hr' },
+  { value: 120, label: '2 hrs' },
+  { value: 360, label: '6 hrs' },
+  { value: 720, label: '12 hrs' },
+  { value: 1440, label: '1 day' },
+  { value: 10080, label: '7 days' }
+]
 
 const emit = defineEmits(['preview'])
 
@@ -99,6 +111,25 @@ const slideshowEnabled = ref(false)
 const slideshowDuration = ref(15)
 const slideshowShuffle = ref(true)
 const slideshowLoading = ref(false)
+
+// Dynamically includes custom durations if reported by TV
+const durationOptions = computed(() => {
+  const options = [...DURATION_OPTIONS]
+  if (slideshowDuration.value && !options.some(opt => opt.value === slideshowDuration.value)) {
+    const val = slideshowDuration.value
+    let label = `${val} min`
+    if (val >= 1440 && val % 1440 === 0) {
+      const days = val / 1440
+      label = `${days} day${days > 1 ? 's' : ''}`
+    } else if (val >= 60 && val % 60 === 0) {
+      const hrs = val / 60
+      label = `${hrs} hr${hrs > 1 ? 's' : ''}`
+    }
+    options.push({ value: val, label })
+    options.sort((a, b) => a.value - b.value)
+  }
+  return options
+})
 
 const loadArtwork = async () => {
   loading.value = true

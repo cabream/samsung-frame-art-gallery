@@ -14,7 +14,10 @@ CACHE_DIR = THUMBNAILS_DIR / "tv"
 
 class TVThumbnailCache:
     def __init__(self):
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _LOGGER.warning(f"Could not create thumbnail cache directory {CACHE_DIR}: {e}")
 
     def _cache_path(self, content_id: str) -> Path:
         # Sanitize content_id for safe filename
